@@ -42,7 +42,7 @@ class PatewayProvider implements AIProviderInterface
 
         if ($response->failed()) {
             throw new RuntimeException(
-                'Pateway API request failed with status ' . $response->status() . ': ' . $response->body()
+                'Pateway API request failed with status ' . $response->status() . '.'
             );
         }
 
@@ -89,7 +89,7 @@ class PatewayProvider implements AIProviderInterface
 
         if ($response->failed()) {
             throw new RuntimeException(
-                'Pateway API request failed with status ' . $response->status() . ': ' . $response->body()
+                'Pateway API request failed with status ' . $response->status() . '.'
             );
         }
 

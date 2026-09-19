@@ -48,7 +48,7 @@ class OpenAIProvider implements AIProviderInterface
 
         if ($response->failed()) {
             throw new RuntimeException(
-                'OpenAI API request failed with status ' . $response->status() . ': ' . $response->body()
+                'OpenAI API request failed with status ' . $response->status() . '.'
             );
         }
 
@@ -91,7 +91,7 @@ class OpenAIProvider implements AIProviderInterface
 
         if ($response->failed()) {
             throw new RuntimeException(
-                'OpenAI API request failed with status ' . $response->status() . ': ' . $response->body()
+                'OpenAI API request failed with status ' . $response->status() . '.'
             );
         }
 

@@ -33,8 +33,8 @@ class MessageController extends Controller
 
         $validated = $request->validate([
             'role' => ['required', 'in:user,assistant,system'],
-            'content' => ['required', 'string'],
-            'metadata' => ['nullable', 'array'],
+            'content' => ['required', 'string', 'max:100000'],
+            'metadata' => ['nullable', 'array', 'max:100'],
         ]);
 
         $message = $conversation->messages()->create($validated);
@@ -75,7 +75,7 @@ class MessageController extends Controller
         }
 
         $validated = $request->validate([
-            'content' => ['required', 'string'],
+            'content' => ['required', 'string', 'max:100000'],
             'model' => ['nullable', 'string', 'max:100', 'regex:/^[a-zA-Z0-9_\-\.]+$/'],
         ]);
 
@@ -151,7 +151,7 @@ class MessageController extends Controller
         );
 
         $validated = $request->validate([
-            'content' => ['required', 'string'],
+            'content' => ['required', 'string', 'max:100000'],
             'model' => ['nullable', 'string', 'max:100', 'regex:/^[a-zA-Z0-9_\-\.]+$/'],
             'stream' => ['nullable', 'boolean'],
         ]);
