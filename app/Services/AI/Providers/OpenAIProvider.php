@@ -116,6 +116,9 @@ class OpenAIProvider implements AIProviderInterface
                 }
 
                 $chunk = json_decode($data, true);
+                if (json_last_error() !== JSON_ERROR_NONE) {
+                    continue;
+                }
                 $content = $chunk['choices'][0]['delta']['content'] ?? null;
 
                 if (is_string($content) && $content !== '') {

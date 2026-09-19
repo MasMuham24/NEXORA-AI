@@ -3,6 +3,10 @@
 return [
     'provider' => env('AI_PROVIDER', 'pateway'),
 
+    'timeout' => 60,
+    'stream_timeout' => 120,
+    'max_tokens' => 2048,
+
     'providers' => [
         'pateway' => [
             'class' => App\Services\AI\Providers\PatewayProvider::class,

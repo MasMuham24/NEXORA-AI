@@ -774,4 +774,336 @@ class ChatTest extends TestCase
 
         $response->assertNotFound();
     }
+
+    public function test_invalid_model_format_is_rejected(): void
+    {
+        $user = User::factory()->create();
+        $conversation = Conversation::factory()->create(['user_id' => $user->id]);
+
+        $response = $this->actingAs($user)
+            ->postJson("/conversations/{$conversation->id}/chat", [
+                'content' => 'Hello',
+                'model' => 'model/with/slashes',
+            ]);
+
+        $response->assertStatus(422)
+            ->assertJsonValidationErrors(['model']);
+    }
+
+    public function test_streaming_chat_handles_malformed_json_chunks_gracefully(): void
+    {
+        config()->set('ai.provider', 'pateway');
+        config()->set('ai.providers.pateway.model', 'default-model-abc');
+
+        Http::fake([
+            'https://api.pateway.ai/v1/chat/completions' => Http::response(
+                "data: not-valid-json\n\n"
+                . "data: {\"choices\":[{\"delta\":{\"content\":\"Valid\"}}]}\n\n"
+                . "data: [DONE]\n\n",
+                200,
+                ['Content-Type' => 'text/event-stream']
+            ),
+        ]);
+
+        $user = User::factory()->create();
+        $conversation = Conversation::factory()->create(['user_id' => $user->id]);
+
+        $response = $this->actingAs($user)
+            ->postJson("/conversations/{$conversation->id}/chat", [
+                'content' => 'Hello',
+                'stream' => true,
+            ]);
+
+        $content = $response->streamedContent();
+
+        $this->assertStringContainsString('data: {"content":"Valid"}', $content);
+        $this->assertDatabaseHas('messages', [
+            'conversation_id' => $conversation->id,
+            'role' => 'assistant',
+            'content' => 'Valid',
+        ]);
+    }
+
+    public function test_conversation_auto_titles_on_first_message(): void
+    {
+        config()->set('ai.provider', 'pateway');
+        config()->set('ai.providers.pateway.model', 'default-model-abc');
+
+        Http::fake([
+            'https://api.pateway.ai/v1/chat/completions' => Http::response([
+                'choices' => [
+                    ['message' => ['content' => 'Reply.']],
+                ],
+            ]),
+        ]);
+
+        $user = User::factory()->create();
+        $conversation = Conversation::factory()->create(['user_id' => $user->id, 'title' => null]);
+
+        $this->assertNull($conversation->title);
+
+        $this->actingAs($user)
+            ->postJson("/conversations/{$conversation->id}/chat", [
+                'content' => 'Explain the Laravel service layer pattern',
+            ]);
+
+        $conversation->refresh();
+        $this->assertNotNull($conversation->title);
+        $this->assertEquals('Explain the Laravel service layer pattern', $conversation->title);
+    }
+
+    public function test_conversation_title_truncated_at_60_chars(): void
+    {
+        config()->set('ai.provider', 'pateway');
+        config()->set('ai.providers.pateway.model', 'default-model-abc');
+
+        Http::fake([
+            'https://api.pateway.ai/v1/chat/completions' => Http::response([
+                'choices' => [
+                    ['message' => ['content' => 'Reply.']],
+                ],
+            ]),
+        ]);
+
+        $user = User::factory()->create();
+        $conversation = Conversation::factory()->create(['user_id' => $user->id, 'title' => null]);
+
+        $longMessage = str_repeat('A', 100);
+
+        $this->actingAs($user)
+            ->postJson("/conversations/{$conversation->id}/chat", [
+                'content' => $longMessage,
+            ]);
+
+        $conversation->refresh();
+        $this->assertEquals(60, strlen($conversation->title));
+    }
+
+    public function test_conversation_not_retitled_on_subsequent_messages(): void
+    {
+        config()->set('ai.provider', 'pateway');
+        config()->set('ai.providers.pateway.model', 'default-model-abc');
+
+        Http::fake([
+            'https://api.pateway.ai/v1/chat/completions' => Http::response([
+                'choices' => [
+                    ['message' => ['content' => 'Reply.']],
+                ],
+            ]),
+        ]);
+
+        $user = User::factory()->create();
+        $conversation = Conversation::factory()->create(['user_id' => $user->id, 'title' => 'Original Title']);
+
+        $this->actingAs($user)
+            ->postJson("/conversations/{$conversation->id}/chat", [
+                'content' => 'Second message',
+            ]);
+
+        $conversation->refresh();
+        $this->assertEquals('Original Title', $conversation->title);
+    }
+
+    public function test_messages_returned_in_chronological_order(): void
+    {
+        $user = User::factory()->create();
+        $conversation = Conversation::factory()->create(['user_id' => $user->id]);
+
+        $msg1 = $conversation->messages()->create([
+            'role' => 'user',
+            'content' => 'First',
+            'created_at' => now()->subMinutes(5),
+        ]);
+
+        $msg2 = $conversation->messages()->create([
+            'role' => 'assistant',
+            'content' => 'Second',
+            'created_at' => now()->subMinutes(4),
+        ]);
+
+        $msg3 = $conversation->messages()->create([
+            'role' => 'user',
+            'content' => 'Third',
+            'created_at' => now()->subMinutes(3),
+        ]);
+
+        $response = $this->actingAs($user)
+            ->getJson("/conversations/{$conversation->id}/messages");
+
+        $response->assertOk();
+
+        $ids = collect($response->json('data'))->pluck('id')->toArray();
+        $this->assertEquals([$msg1->id, $msg2->id, $msg3->id], $ids);
+    }
+
+    public function test_conversation_search_returns_matching_conversations(): void
+    {
+        $user = User::factory()->create();
+
+        $conv1 = Conversation::factory()->create(['user_id' => $user->id, 'title' => 'Laravel Tips']);
+        $conv2 = Conversation::factory()->create(['user_id' => $user->id, 'title' => 'Vue.js Guide']);
+        $conv3 = Conversation::factory()->create(['user_id' => $user->id, 'title' => 'Laravel Performance']);
+
+        $response = $this->actingAs($user)
+            ->getJson('/conversations');
+
+        $response->assertOk();
+
+        $titles = collect($response->json('data'))->pluck('title')->toArray();
+        $this->assertContains('Laravel Tips', $titles);
+        $this->assertContains('Vue.js Guide', $titles);
+        $this->assertContains('Laravel Performance', $titles);
+    }
+
+    public function test_edit_message_and_subsequent_messages_deleted(): void
+    {
+        config()->set('ai.provider', 'pateway');
+        config()->set('ai.providers.pateway.model', 'default-model-abc');
+
+        Http::fake([
+            'https://api.pateway.ai/v1/chat/completions' => Http::response([
+                'choices' => [
+                    ['message' => ['content' => 'New reply.']],
+                ],
+            ]),
+        ]);
+
+        $user = User::factory()->create();
+        $conversation = Conversation::factory()->create(['user_id' => $user->id]);
+
+        $userMsg = $conversation->messages()->create([
+            'role' => 'user',
+            'content' => 'Original',
+        ]);
+
+        $assistantMsg = $conversation->messages()->create([
+            'role' => 'assistant',
+            'content' => 'Old reply',
+        ]);
+
+        $followUp = $conversation->messages()->create([
+            'role' => 'user',
+            'content' => 'Follow up',
+        ]);
+
+        $this->actingAs($user)
+            ->putJson("/conversations/{$conversation->id}/messages/{$userMsg->id}", [
+                'content' => 'Updated',
+            ]);
+
+        $this->assertDatabaseMissing('messages', ['id' => $assistantMsg->id]);
+        $this->assertDatabaseMissing('messages', ['id' => $followUp->id]);
+        $this->assertDatabaseHas('messages', [
+            'id' => $userMsg->id,
+            'content' => 'Updated',
+        ]);
+    }
+
+    public function test_regenerate_creates_new_assistant_message(): void
+    {
+        config()->set('ai.provider', 'pateway');
+        config()->set('ai.providers.pateway.model', 'default-model-abc');
+
+        Http::fake([
+            'https://api.pateway.ai/v1/chat/completions' => Http::response([
+                'choices' => [
+                    ['message' => ['content' => 'Fresh reply.']],
+                ],
+            ]),
+        ]);
+
+        $user = User::factory()->create();
+        $conversation = Conversation::factory()->create(['user_id' => $user->id]);
+
+        $conversation->messages()->create([
+            'role' => 'user',
+            'content' => 'Question',
+        ]);
+
+        $oldAssistant = $conversation->messages()->create([
+            'role' => 'assistant',
+            'content' => 'Old reply',
+        ]);
+
+        $response = $this->actingAs($user)
+            ->postJson("/conversations/{$conversation->id}/messages/{$oldAssistant->id}/regenerate");
+
+        $response->assertOk();
+
+        $this->assertDatabaseHas('messages', [
+            'conversation_id' => $conversation->id,
+            'role' => 'assistant',
+            'content' => 'Fresh reply.',
+        ]);
+
+        $newAssistant = $conversation->messages()->where('role', 'assistant')->latest()->first();
+        $this->assertNotEquals($oldAssistant->id, $newAssistant->id);
+        $this->assertTrue($newAssistant->metadata['regenerated'] ?? false);
+    }
+
+    public function test_chat_prevents_duplicate_submissions(): void
+    {
+        config()->set('ai.provider', 'pateway');
+        config()->set('ai.providers.pateway.model', 'default-model-abc');
+
+        Http::fake([
+            'https://api.pateway.ai/v1/chat/completions' => Http::response([
+                'choices' => [
+                    ['message' => ['content' => 'Reply.']],
+                ],
+            ]),
+        ]);
+
+        $user = User::factory()->create();
+        $conversation = Conversation::factory()->create(['user_id' => $user->id]);
+
+        $response1 = $this->actingAs($user)
+            ->postJson("/conversations/{$conversation->id}/chat", [
+                'content' => 'Hello',
+            ]);
+
+        $response2 = $this->actingAs($user)
+            ->postJson("/conversations/{$conversation->id}/chat", [
+                'content' => 'Hello',
+            ]);
+
+        $response1->assertOk();
+        $response2->assertOk();
+
+        $this->assertEquals(2, $conversation->messages()->where('role', 'user')->count());
+    }
+
+    public function test_streaming_partial_assistant_persisted_on_failure(): void
+    {
+        config()->set('ai.provider', 'pateway');
+        config()->set('ai.providers.pateway.model', 'default-model-abc');
+
+        Http::fake([
+            'https://api.pateway.ai/v1/chat/completions' => Http::response(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"Partial\"}}]}\n\n",
+                200,
+                ['Content-Type' => 'text/event-stream']
+            ),
+        ]);
+
+        $user = User::factory()->create();
+        $conversation = Conversation::factory()->create(['user_id' => $user->id]);
+
+        $response = $this->actingAs($user)
+            ->postJson("/conversations/{$conversation->id}/chat", [
+                'content' => 'Hello',
+                'stream' => true,
+            ]);
+
+        $content = $response->streamedContent();
+
+        $this->assertDatabaseHas('messages', [
+            'conversation_id' => $conversation->id,
+            'role' => 'assistant',
+            'content' => 'Partial',
+        ]);
+
+        $msg = $conversation->messages()->where('role', 'assistant')->first();
+        $this->assertTrue($msg->metadata['stream'] ?? false);
+    }
 }

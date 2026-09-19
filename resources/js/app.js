@@ -1,3 +1,6 @@
+import { marked } from 'marked';
+import DOMPurify from 'dompurify';
+
 (() => {
     'use strict';
 
@@ -61,6 +64,105 @@
         clearTimeout(window.__toastT);
         window.__toastT = setTimeout(() => t.classList.add('hidden'), 3800);
     };
+
+    // ---------------------------------------------------------------- markdown
+
+    marked.setOptions({
+        gfm: true,
+        breaks: false,
+    });
+
+    const MD_ALLOWED_TAGS = [
+        'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+        'ul', 'ol', 'li', 'strong', 'em', 'del', 'blockquote',
+        'a', 'code', 'pre', 'table', 'thead', 'tbody', 'tr', 'th', 'td',
+        'hr', 'br', 'span', 'div', 'input',
+    ];
+    const MD_ALLOWED_ATTR = ['href', 'title', 'class', 'target', 'rel', 'checked', 'type'];
+
+    function renderMarkdown(md) {
+        const raw = marked.parse(md || '');
+        const clean = DOMPurify.sanitize(raw, {
+            ALLOWED_TAGS: MD_ALLOWED_TAGS,
+            ALLOWED_ATTR: MD_ALLOWED_ATTR,
+            ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto):|[^a-z]|[a-z+.-]+(?:[^a-z+.-:]|$))/i,
+        });
+        const host = document.createElement('div');
+        host.className = 'md';
+        host.innerHTML = clean;
+        decorateCodeBlocks(host);
+        return host;
+    }
+
+    function decorateCodeBlocks(host) {
+        host.querySelectorAll('pre').forEach((pre) => {
+            if (pre.dataset.decorated) return;
+            pre.dataset.decorated = '1';
+            const code = pre.querySelector('code');
+            const match = code?.className.match(/language-([\w-]+)/);
+            const lang = match ? match[1] : '';
+            const wrap = document.createElement('div');
+            wrap.className = 'code-wrap';
+            const head = document.createElement('div');
+            head.className = 'code-head';
+            const label = document.createElement('span');
+            label.className = 'code-lang';
+            label.textContent = lang ? lang.toUpperCase() : 'CODE';
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'code-copy';
+            btn.textContent = 'COPY';
+            btn.addEventListener('click', async () => {
+                const ok = await copyText(code?.textContent ?? '');
+                btn.textContent = ok ? 'COPIED' : 'FAILED';
+                setTimeout(() => { btn.textContent = 'COPY'; }, 1600);
+            });
+            head.appendChild(label);
+            head.appendChild(btn);
+            wrap.appendChild(head);
+            pre.parentNode?.insertBefore(wrap, pre);
+            wrap.appendChild(pre);
+        });
+    }
+
+    async function copyText(text) {
+        try {
+            await navigator.clipboard.writeText(text);
+            return true;
+        } catch (e) {
+            try {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                ta.setAttribute('readonly', '');
+                ta.style.position = 'fixed';
+                ta.style.opacity = '0';
+                document.body.appendChild(ta);
+                ta.select();
+                const ok = document.execCommand('copy');
+                document.body.removeChild(ta);
+                return ok;
+            } catch (e2) {
+                return false;
+            }
+        }
+    }
+
+    let streamRaf = null;
+    let streamTarget = null;
+    let streamText = '';
+    function queueStreamRender(node, text, area) {
+        streamTarget = node;
+        streamText = text;
+        if (streamRaf) return;
+        streamRaf = requestAnimationFrame(() => {
+            streamRaf = null;
+            if (!streamTarget || !streamTarget.isConnected) return;
+            const nearBottom = area.scrollHeight - area.scrollTop - area.clientHeight < 140;
+            streamTarget.textContent = '';
+            streamTarget.appendChild(renderMarkdown(streamText));
+            if (nearBottom) area.scrollTop = area.scrollHeight;
+        });
+    }
 
     // ---------------------------------------------------------------- sidebar
 
@@ -339,24 +441,24 @@
 
         const body = document.createElement('div');
         body.className = 'px-4 py-4';
-        const content = document.createElement('p');
-        content.className = 'text-[14px] leading-relaxed text-bone/90 whitespace-pre-wrap';
-        content.textContent = m.content;
-        body.appendChild(content);
+        if (isUser) {
+            const content = document.createElement('p');
+            content.className = 'text-[14px] leading-relaxed text-bone/90 whitespace-pre-wrap break-words';
+            content.textContent = m.content;
+            body.appendChild(content);
+        } else {
+            body.appendChild(renderMarkdown(m.content));
+        }
         panel.appendChild(body);
 
         const foot = document.createElement('div');
         foot.className = 'flex items-center gap-1 px-3 pb-3 pt-0';
         if (isUser) {
-            foot.appendChild(actionBtn('EDIT', () => startEdit(m, content, panel)));
+            foot.appendChild(actionBtn('EDIT', () => startEdit(m, panel)));
         } else {
             foot.appendChild(actionBtn('COPY', async () => {
-                try {
-                    await navigator.clipboard.writeText(m.content);
-                    toast('Copied to clipboard.');
-                } catch (e) {
-                    toast('Copy failed.');
-                }
+                const ok = await copyText(m.content);
+                toast(ok ? 'Copied to clipboard.' : 'Copy failed.');
             }));
             foot.appendChild(actionBtn('REGENERATE', async () => {
                 await regenerate(m);
@@ -380,8 +482,9 @@
 
     // ---------------------------------------------------------------- edit
 
-    function startEdit(m, node, panel) {
-        node.style.display = 'none';
+    function startEdit(m, panel) {
+        const body = panel.querySelector('.px-4.py-4');
+        body.style.display = 'none';
         const area = document.createElement('div');
         area.className = 'space-y-2';
         const ta = document.createElement('textarea');
@@ -410,14 +513,14 @@
         });
         const cancel = actionBtn('CANCEL', () => {
             area.remove();
-            node.style.display = '';
+            body.style.display = '';
         });
         cancel.classList.add('text-faint');
         btns.appendChild(save);
         btns.appendChild(cancel);
         area.appendChild(ta);
         area.appendChild(btns);
-        panel.querySelector('.px-4.py-4').appendChild(area);
+        panel.appendChild(area);
         ta.focus();
         ta.setSelectionRange(ta.value.length, ta.value.length);
     }
@@ -512,10 +615,10 @@
                 ${'<span class="w-1.5 h-3 bg-accent/80 seg-pulse"></span>'.repeat(14)}
             </div>
             <div class="px-4 pb-4 pt-2">
-                <p class="text-[14px] leading-relaxed text-bone/90 whitespace-pre-wrap"></p>
+                <div class="md-host"></div>
             </div>`;
 
-        const genText = genPanel.querySelector('p');
+        const genBody = genPanel.querySelector('.md-host');
 
         let base = area.querySelector('.max-w-4xl');
         if (!base) {
@@ -531,7 +634,6 @@
         el('composer-input').value = '';
         autosize();
 
-        const wasEmpty = !state.messages.length;
         state.streaming = true;
         setComposerBusy(true);
         const model = el('model-select').value || null;
@@ -575,8 +677,7 @@
                                 const j = JSON.parse(d);
                                 if (typeof j.content === 'string') {
                                     full += j.content;
-                                    genText.textContent = full;
-                                    area.scrollTop = area.scrollHeight;
+                                    queueStreamRender(genBody, full, area);
                                 } else if (j.error) {
                                     toast(j.error);
                                     failed = true;
@@ -589,7 +690,9 @@
                 }
             }
         } catch (err) {
-            if (err.name !== 'AbortError') {
+            if (err.name === 'AbortError') {
+                toast('Generation stopped.');
+            } else {
                 toast('AI request failed.');
             }
             failed = true;
@@ -600,19 +703,12 @@
             genPanel.classList.add('opacity-40');
         }
 
-        if (wasEmpty && !failed && text) {
-            const { ok } = await api(`/conversations/${convo.id}`, {
-                method: 'PUT',
-                body: { title: text.slice(0, 60) },
-            });
-            if (ok) {
-                state.current.title = text.slice(0, 60);
-                renderConversationMeta();
-                await loadConversations();
-            }
+        await loadConversations();
+        if (state.current && state.current.id === convo.id) {
+            await openConversation(convo.id, { keepScroll: true });
+        } else {
+            renderConversationMeta();
         }
-
-        await openConversation(convo.id, { keepScroll: true });
     }
 
     function stopStreaming() {

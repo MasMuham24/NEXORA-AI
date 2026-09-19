@@ -114,6 +114,9 @@ class PatewayProvider implements AIProviderInterface
                 }
 
                 $chunk = json_decode($data, true);
+                if (json_last_error() !== JSON_ERROR_NONE) {
+                    continue;
+                }
                 $content = null;
 
                 if ($protocol === 'anthropic') {

@@ -41,7 +41,7 @@ class ConversationController extends Controller
             404
         );
 
-        $conversation->load('messages');
+        $conversation->load(['messages' => fn ($query) => $query->orderBy('created_at')->orderBy('id')]);
 
         return response()->json([
             'conversation' => $conversation,

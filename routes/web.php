@@ -3,10 +3,11 @@
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\ConversationController;
 use App\Http\Controllers\MessageController;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
-    return auth()->check()
+    return Auth::check()
         ? view('app')
         : view('auth.login');
 });
@@ -29,11 +30,13 @@ Route::middleware('auth')->group(function () {
     Route::get('/conversations/{conversation}', [ConversationController::class, 'show']);
     Route::put('/conversations/{conversation}', [ConversationController::class, 'update']);
     Route::delete('/conversations/{conversation}', [ConversationController::class, 'destroy']);
-    // Messages
-    Route::get('/conversations/{conversation}/messages', [MessageController::class, 'index']);
-    Route::post('/conversations/{conversation}/messages', [MessageController::class, 'store']);
-    Route::delete('/conversations/{conversation}/messages/{message}', [MessageController::class, 'destroy']);
-    Route::put('/conversations/{conversation}/messages/{message}', [MessageController::class, 'update']);
-    Route::post('/conversations/{conversation}/chat', [MessageController::class, 'chat']);
-    Route::post('/conversations/{conversation}/messages/{message}/regenerate', [MessageController::class, 'regenerate']);
+    // Messages & AI
+    Route::middleware(['throttle:60,1'])->group(function () {
+        Route::get('/conversations/{conversation}/messages', [MessageController::class, 'index']);
+        Route::post('/conversations/{conversation}/messages', [MessageController::class, 'store']);
+        Route::delete('/conversations/{conversation}/messages/{message}', [MessageController::class, 'destroy']);
+        Route::put('/conversations/{conversation}/messages/{message}', [MessageController::class, 'update']);
+        Route::post('/conversations/{conversation}/chat', [MessageController::class, 'chat']);
+        Route::post('/conversations/{conversation}/messages/{message}/regenerate', [MessageController::class, 'regenerate']);
+    });
 });

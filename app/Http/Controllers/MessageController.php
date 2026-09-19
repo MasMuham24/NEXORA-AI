@@ -21,7 +21,7 @@ class MessageController extends Controller
             404
         );
 
-        return response()->json($conversation->messages()->latest('created_at')->paginate(50));
+        return response()->json($conversation->messages()->orderBy('created_at')->orderBy('id')->paginate(50));
     }
 
     public function store(Request $request, Conversation $conversation)
@@ -76,7 +76,7 @@ class MessageController extends Controller
 
         $validated = $request->validate([
             'content' => ['required', 'string'],
-            'model' => ['nullable', 'string', 'max:255'],
+            'model' => ['nullable', 'string', 'max:100', 'regex:/^[a-zA-Z0-9_\-\.]+$/'],
         ]);
 
         $providerName = config('ai.provider', 'pateway');
@@ -99,6 +99,7 @@ class MessageController extends Controller
         $history = $conversation->messages()
             ->where('id', '<=', $userMessage->id)
             ->orderBy('created_at')
+            ->orderBy('id')
             ->get()
             ->map(fn (Message $message) => [
                 'role' => $message->role,
@@ -151,7 +152,7 @@ class MessageController extends Controller
 
         $validated = $request->validate([
             'content' => ['required', 'string'],
-            'model' => ['nullable', 'string', 'max:255'],
+            'model' => ['nullable', 'string', 'max:100', 'regex:/^[a-zA-Z0-9_\-\.]+$/'],
             'stream' => ['nullable', 'boolean'],
         ]);
 
@@ -170,8 +171,15 @@ class MessageController extends Controller
             'model' => $model,
         ];
 
+        if (empty($conversation->title)) {
+            $conversation->update([
+                'title' => mb_substr(trim($validated['content']), 0, 60),
+            ]);
+        }
+
         $history = $conversation->messages()
             ->orderBy('created_at')
+            ->orderBy('id')
             ->get()
             ->map(fn (Message $message) => [
                 'role' => $message->role,
@@ -270,39 +278,51 @@ class MessageController extends Controller
             $providerName
         ) {
             $full = '';
+            $failed = false;
 
             try {
                 foreach ($this->aiService->streamChat($history, [
                     'model' => $model,
                 ]) as $chunk) {
+                    if (connection_aborted()) {
+                        $failed = true;
+                        break;
+                    }
                     $full .= $chunk;
                     echo 'data: ' . json_encode(['content' => $chunk]) . "\n\n";
                     flush();
                 }
 
-                echo "data: [DONE]\n\n";
-                flush();
+                if (! $failed) {
+                    echo "data: [DONE]\n\n";
+                    flush();
+                }
             } catch (Throwable $e) {
                 report($e);
+                $failed = true;
                 echo 'data: ' . json_encode(['error' => 'AI request failed.']) . "\n\n";
                 flush();
-                return;
             }
 
-            $conversation->messages()->create([
-                'role' => 'assistant',
-                'content' => $full,
-                'metadata' => [
-                    'provider' => $providerName,
-                    'model' => $model,
-                    'stream' => true,
-                ],
-            ]);
+            if ($full !== '') {
+                $conversation->messages()->create([
+                    'role' => 'assistant',
+                    'content' => $full,
+                    'metadata' => [
+                        'provider' => $providerName,
+                        'model' => $model,
+                        'stream' => true,
+                        'incomplete' => $failed,
+                        'error' => $failed,
+                    ],
+                ]);
 
-            $conversation->touch();
+                $conversation->touch();
+            }
         }, 200, [
-            'Content-Type' => 'text/event-stream',
-            'Cache-Control' => 'no-cache',
+            'Content-Type' => 'text/event-stream; charset=utf-8',
+            'Cache-Control' => 'no-cache, no-transform',
+            'Connection' => 'keep-alive',
             'X-Accel-Buffering' => 'no',
         ]);
     }
@@ -347,6 +367,7 @@ class MessageController extends Controller
         $history = $conversation->messages()
             ->where('id', '<=', $userMessage->id)
             ->orderBy('created_at')
+            ->orderBy('id')
             ->get()
             ->map(fn (Message $message) => [
                 'role' => $message->role,
