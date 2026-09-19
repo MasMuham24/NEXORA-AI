@@ -6,6 +6,7 @@ use App\Models\Conversation;
 use App\Models\Message;
 use App\Services\AI\AIService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Throwable;
 
 class MessageController extends Controller
@@ -13,6 +14,15 @@ class MessageController extends Controller
     public function __construct(
         protected AIService $aiService
     ) {}
+
+    protected function reportAiFailure(Throwable $e, array $context = []): void
+    {
+        Log::withContext(array_filter([
+            'user_id' => auth()->id(),
+            ...$context,
+        ], fn ($value) => $value !== null));
+        report($e);
+    }
 
     public function index(Request $request, Conversation $conversation)
     {
@@ -114,7 +124,10 @@ class MessageController extends Controller
             ]);
             $content = $this->aiService->extractContent($response);
         } catch (Throwable $e) {
-            report($e);
+            $this->reportAiFailure($e, [
+                'conversation_id' => $conversation->id,
+                'message_id' => $userMessage->id,
+            ]);
 
             return response()->json([
                 'message' => 'AI request failed.',
@@ -232,7 +245,7 @@ class MessageController extends Controller
             ]);
             $content = $this->aiService->extractContent($response);
         } catch (Throwable $e) {
-            report($e);
+            $this->reportAiFailure($e, ['conversation_id' => $conversation->id]);
 
             return response()->json([
                 'message' => 'AI request failed.',
@@ -298,7 +311,7 @@ class MessageController extends Controller
                     flush();
                 }
             } catch (Throwable $e) {
-                report($e);
+                $this->reportAiFailure($e, ['conversation_id' => $conversation->id, 'stream' => true]);
                 $failed = true;
                 echo 'data: ' . json_encode(['error' => 'AI request failed.']) . "\n\n";
                 flush();
@@ -382,7 +395,10 @@ class MessageController extends Controller
             ]);
             $content = $this->aiService->extractContent($response);
         } catch (Throwable $e) {
-            report($e);
+            $this->reportAiFailure($e, [
+                'conversation_id' => $conversation->id,
+                'message_id' => $assistantMessage->id,
+            ]);
 
             return response()->json([
                 'message' => 'AI request failed.',

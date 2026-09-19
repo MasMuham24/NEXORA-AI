@@ -12,7 +12,8 @@ class ConversationController extends Controller
         $conversations = $request->user()
             ->conversations()
             ->withCount('messages')
-            ->latest('updated_at')
+            ->orderByDesc('updated_at')
+            ->orderByDesc('id')
             ->paginate(20);
 
         return response()->json($conversations);

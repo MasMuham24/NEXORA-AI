@@ -40,7 +40,7 @@ class OpenAIProvider implements AIProviderInterface
 
         try {
             $response = Http::withToken($this->apiKey)
-                ->timeout(60)
+                ->timeout((int) config('ai.timeout', 60))
                 ->post("{$this->baseUrl}/chat/completions", $payload);
         } catch (ConnectionException $e) {
             throw new RuntimeException('Unable to connect to OpenAI API.', 0, $e);
@@ -80,7 +80,7 @@ class OpenAIProvider implements AIProviderInterface
 
         try {
             $response = Http::withToken($this->apiKey)
-                ->timeout(60)
+                ->timeout((int) config('ai.stream_timeout', 120))
                 ->withOptions(['stream' => true])
                 ->send('POST', "{$this->baseUrl}/chat/completions", [
                     'json' => $payload,

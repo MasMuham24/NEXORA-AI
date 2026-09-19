@@ -483,6 +483,10 @@ import DOMPurify from 'dompurify';
     // ---------------------------------------------------------------- edit
 
     function startEdit(m, panel) {
+        if (state.streaming) {
+            toast('Stop generation before editing.');
+            return;
+        }
         const body = panel.querySelector('.px-4.py-4');
         body.style.display = 'none';
         const area = document.createElement('div');
@@ -569,6 +573,10 @@ import DOMPurify from 'dompurify';
     }
 
     async function deleteConversation(id) {
+        if (state.streaming) {
+            toast('Stop generation before deleting.');
+            return;
+        }
         const ok = window.confirm('Delete this conversation? Irreversible.');
         if (!ok) return;
         const { ok: res, data } = await api(`/conversations/${id}`, { method: 'DELETE' });

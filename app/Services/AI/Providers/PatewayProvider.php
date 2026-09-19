@@ -175,7 +175,7 @@ class PatewayProvider implements AIProviderInterface
     protected function request(string $method, string $url, array $payload): Response
     {
         return Http::withToken($this->apiKey)
-            ->timeout(60)
+            ->timeout((int) config('ai.timeout', 60))
             ->acceptJson()
             ->send($method, $url, ['json' => $payload]);
     }
@@ -183,7 +183,7 @@ class PatewayProvider implements AIProviderInterface
     protected function requestRaw(string $method, string $url, array $payload): Response
     {
         return Http::withToken($this->apiKey)
-            ->timeout(120)
+            ->timeout((int) config('ai.stream_timeout', 120))
             ->acceptJson()
             ->withOptions(['stream' => true])
             ->send($method, $url, ['json' => $payload]);

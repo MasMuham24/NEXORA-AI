@@ -3,9 +3,9 @@
 return [
     'provider' => env('AI_PROVIDER', 'pateway'),
 
-    'timeout' => 60,
-    'stream_timeout' => 120,
-    'max_tokens' => 2048,
+    'timeout' => (int) env('AI_TIMEOUT', 60),
+    'stream_timeout' => (int) env('AI_STREAM_TIMEOUT', 120),
+    'max_tokens' => (int) env('AI_MAX_TOKENS', 2048),
 
     'providers' => [
         'pateway' => [
@@ -16,6 +16,7 @@ return [
                 'PATEWAY_BASE_URL',
                 'https://api.pateway.ai/v1'
             ),
+            'max_tokens' => (int) env('AI_MAX_TOKENS', 2048),
         ],
 
         'openai' => [
