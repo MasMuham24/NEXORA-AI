@@ -6,6 +6,7 @@ return [
     'timeout' => (int) env('AI_TIMEOUT', 60),
     'stream_timeout' => (int) env('AI_STREAM_TIMEOUT', 120),
     'max_tokens' => (int) env('AI_MAX_TOKENS', 2048),
+    'context_messages' => (int) env('AI_CONTEXT_MESSAGES', 50),
 
     'providers' => [
         'pateway' => [

@@ -76,10 +76,9 @@ class ChatTest extends TestCase
 
         $response->assertOk()
             ->assertJsonPath('data.user_message.metadata.model', 'default-model-abc')
-->assertJsonPath('data.assistant_message.metadata.model', 'default-model-abc');
+            ->assertJsonPath('data.assistant_message.metadata.model', 'default-model-abc');
 
-        Http::assertSent(fn (Request $request) =>
-            $request->url() === 'https://api.pateway.ai/v1/chat/completions'
+        Http::assertSent(fn (Request $request) => $request->url() === 'https://api.pateway.ai/v1/chat/completions'
             && $request['model'] === 'default-model-abc'
         );
     }
@@ -110,8 +109,7 @@ class ChatTest extends TestCase
             ->assertJsonPath('data.assistant_message.content', 'Confirmed by Claude.')
             ->assertJsonPath('data.assistant_message.metadata.model', 'claude-haiku-4-5-20251001');
 
-        Http::assertSent(fn (Request $request) =>
-            $request->url() === 'https://api.pateway.ai/v1/anthropic/v1/messages'
+        Http::assertSent(fn (Request $request) => $request->url() === 'https://api.pateway.ai/v1/anthropic/v1/messages'
             && $request['model'] === 'claude-haiku-4-5-20251001'
             && $request['max_tokens'] === 2048
             && $request['stream'] === false
@@ -127,11 +125,11 @@ class ChatTest extends TestCase
         Http::fake([
             'https://api.pateway.ai/v1/anthropic/v1/messages' => Http::response(
                 "event: message_start\n"
-                . "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\"}}\n\n"
-                . "event: content_block_delta\n"
-                . "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Thinking\"}}\n\n"
-                . "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\" fast.\"}}\n\n"
-                . "data: [DONE]\n\n",
+                ."data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\"}}\n\n"
+                ."event: content_block_delta\n"
+                ."data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Thinking\"}}\n\n"
+                ."data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\" fast.\"}}\n\n"
+                ."data: [DONE]\n\n",
                 200,
                 ['Content-Type' => 'text/event-stream']
             ),
@@ -186,8 +184,7 @@ class ChatTest extends TestCase
             ->assertJsonPath('data.user_message.metadata.model', 'custom-model-xyz')
             ->assertJsonPath('data.assistant_message.metadata.model', 'custom-model-xyz');
 
-        Http::assertSent(fn (Request $request) =>
-            $request->url() === 'https://api.pateway.ai/v1/chat/completions'
+        Http::assertSent(fn (Request $request) => $request->url() === 'https://api.pateway.ai/v1/chat/completions'
             && $request['model'] === 'custom-model-xyz'
         );
     }
@@ -303,8 +300,7 @@ class ChatTest extends TestCase
             }
 
             $payload = $request->data();
-            $hasUserMessage = collect($payload['messages'])->first(fn ($m) =>
-                $m['role'] === 'user' && $m['content'] === $userMessage->content
+            $hasUserMessage = collect($payload['messages'])->first(fn ($m) => $m['role'] === 'user' && $m['content'] === $userMessage->content
             );
 
             return $hasUserMessage !== null && $request['model'] === 'default-model-abc';
@@ -446,7 +442,7 @@ class ChatTest extends TestCase
             ->assertJsonPath('data.assistant_message.metadata.edited', true)
             ->assertJsonPath('data.assistant_message.metadata.edited_message', $userMessage->id);
 
-        Http::assertSent(function (Request $request) use ($userMessage) {
+        Http::assertSent(function (Request $request) {
             if ($request->url() !== 'https://api.pateway.ai/v1/chat/completions') {
                 return false;
             }
@@ -497,8 +493,7 @@ class ChatTest extends TestCase
         $response->assertOk()
             ->assertJsonPath('data.assistant_message.metadata.model', 'custom-model-xyz');
 
-        Http::assertSent(fn (Request $request) =>
-            $request->url() === 'https://api.pateway.ai/v1/chat/completions'
+        Http::assertSent(fn (Request $request) => $request->url() === 'https://api.pateway.ai/v1/chat/completions'
             && $request['model'] === 'custom-model-xyz'
         );
     }
@@ -571,16 +566,19 @@ class ChatTest extends TestCase
 
         $user = User::factory()->create();
         $conversation = Conversation::factory()->create(['user_id' => $user->id]);
+        $updatedAtBefore = $conversation->fresh()->updated_at;
 
         $userMessage = $conversation->messages()->create([
             'role' => 'user',
             'content' => 'Original question',
         ]);
 
-        $conversation->messages()->create([
+        $oldAssistant = $conversation->messages()->create([
             'role' => 'assistant',
             'content' => 'Old reply.',
         ]);
+
+        $this->travel(10)->minutes();
 
         $response = $this->actingAs($user)
             ->putJson("/conversations/{$conversation->id}/messages/{$userMessage->id}", [
@@ -590,7 +588,70 @@ class ChatTest extends TestCase
         $response->assertStatus(502)
             ->assertJsonPath('message', 'AI request failed.');
 
-        $this->assertSame(1, $conversation->messages()->count());
+        $this->assertSame(2, $conversation->messages()->count());
+        $this->assertDatabaseHas('messages', [
+            'id' => $userMessage->id,
+            'content' => 'Updated question',
+        ]);
+        $this->assertDatabaseHas('messages', [
+            'id' => $oldAssistant->id,
+            'content' => 'Old reply.',
+        ]);
+        $this->assertEquals($updatedAtBefore, $conversation->fresh()->updated_at);
+    }
+
+    public function test_edit_ai_context_excludes_messages_after_edited_message(): void
+    {
+        config()->set('ai.provider', 'pateway');
+        config()->set('ai.providers.pateway.model', 'default-model-abc');
+
+        Http::fake([
+            'https://api.pateway.ai/v1/chat/completions' => Http::response([
+                'choices' => [
+                    ['message' => ['content' => 'New reply.']],
+                ],
+            ]),
+        ]);
+
+        $user = User::factory()->create();
+        $conversation = Conversation::factory()->create(['user_id' => $user->id]);
+
+        $conversation->messages()->create([
+            'role' => 'user',
+            'content' => 'First',
+        ]);
+        $conversation->messages()->create([
+            'role' => 'assistant',
+            'content' => 'First reply.',
+        ]);
+        $edited = $conversation->messages()->create([
+            'role' => 'user',
+            'content' => 'Second question',
+        ]);
+        $subsequent = $conversation->messages()->create([
+            'role' => 'assistant',
+            'content' => 'Subsequent reply.',
+        ]);
+
+        $this->actingAs($user)
+            ->putJson("/conversations/{$conversation->id}/messages/{$edited->id}", [
+                'content' => 'Edited second question',
+            ])->assertOk();
+
+        Http::assertSent(function (Request $request) {
+            if ($request->url() !== 'https://api.pateway.ai/v1/chat/completions') {
+                return false;
+            }
+
+            $messages = $request->data()['messages'];
+
+            return count($messages) === 3
+                && $messages[0] === ['role' => 'user', 'content' => 'First']
+                && $messages[1] === ['role' => 'assistant', 'content' => 'First reply.']
+                && $messages[2] === ['role' => 'user', 'content' => 'Edited second question'];
+        });
+
+        $this->assertDatabaseMissing('messages', ['id' => $subsequent->id]);
     }
 
     private function fakeStreamingResponse(?string &$sentModel = null): void
@@ -601,8 +662,8 @@ class ChatTest extends TestCase
 
                 return Http::response(
                     "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n\n"
-                    . "data: {\"choices\":[{\"delta\":{\"content\":\" world\"}}]}\n\n"
-                    . "data: [DONE]\n\n",
+                    ."data: {\"choices\":[{\"delta\":{\"content\":\" world\"}}]}\n\n"
+                    ."data: [DONE]\n\n",
                     200,
                     ['Content-Type' => 'text/event-stream']
                 );
@@ -798,8 +859,8 @@ class ChatTest extends TestCase
         Http::fake([
             'https://api.pateway.ai/v1/chat/completions' => Http::response(
                 "data: not-valid-json\n\n"
-                . "data: {\"choices\":[{\"delta\":{\"content\":\"Valid\"}}]}\n\n"
-                . "data: [DONE]\n\n",
+                ."data: {\"choices\":[{\"delta\":{\"content\":\"Valid\"}}]}\n\n"
+                ."data: [DONE]\n\n",
                 200,
                 ['Content-Type' => 'text/event-stream']
             ),
@@ -1105,5 +1166,302 @@ class ChatTest extends TestCase
 
         $msg = $conversation->messages()->where('role', 'assistant')->first();
         $this->assertTrue($msg->metadata['stream'] ?? false);
+    }
+
+    public function test_chat_limits_ai_context_to_configured_message_count(): void
+    {
+        config(['ai.context_messages' => 3]);
+        $user = User::factory()->create();
+        $conversation = Conversation::factory()->create([
+            'user_id' => $user->id,
+        ]);
+        $conversation->messages()->createMany([
+            ['role' => 'user', 'content' => 'Message 1'],
+            ['role' => 'assistant', 'content' => 'Message 2'],
+            ['role' => 'user', 'content' => 'Message 3'],
+            ['role' => 'assistant', 'content' => 'Message 4'],
+        ]);
+
+        Http::fake([
+            '*' => Http::response([
+                'id' => 'msg_test',
+                'model' => 'claude-haiku-4-20250414',
+                'content' => [
+                    ['text' => 'Final response'],
+                ],
+                'usage' => ['input_tokens' => 10, 'output_tokens' => 5],
+            ]),
+        ]);
+
+        $response = $this->actingAs($user)->postJson("/conversations/{$conversation->id}/chat",
+            [
+                'content' => 'New message',
+            ]);
+        $response->assertOk();
+        Http::assertSent(function ($request) {
+            $messages = $request->data()['messages'];
+
+            return count($messages) === 4
+                && $messages[0]['content'] === 'Message 2'
+            && $messages[1]['content'] === 'Message 3'
+            && $messages[2]['content'] === 'Message 4'
+            && $messages[3]['content'] === 'New message';
+        });
+    }
+
+    public function test_edit_limits_ai_context_to_configured_message_count(): void
+    {
+        config(['ai.context_messages' => 2]);
+        config()->set('ai.provider', 'pateway');
+        config()->set('ai.providers.pateway.model', 'default-model-abc');
+
+        Http::fake([
+            'https://api.pateway.ai/v1/chat/completions' => Http::response([
+                'choices' => [
+                    [
+                        'message' => [
+                            'content' => 'Edited response.',
+                        ],
+                    ],
+                ],
+            ]),
+        ]);
+
+        $user = User::factory()->create();
+
+        $conversation = Conversation::factory()->create([
+            'user_id' => $user->id,
+        ]);
+
+        $conversation->messages()->create([
+            'role' => 'user',
+            'content' => 'Message 1',
+        ]);
+
+        $conversation->messages()->create([
+            'role' => 'assistant',
+            'content' => 'Message 2',
+        ]);
+
+        $message3 = $conversation->messages()->create([
+            'role' => 'user',
+            'content' => 'Message 3',
+        ]);
+
+        $conversation->messages()->create([
+            'role' => 'assistant',
+            'content' => 'Message 4',
+        ]);
+
+        $response = $this->actingAs($user)
+            ->putJson(
+                "/conversations/{$conversation->id}/messages/{$message3->id}",
+                [
+                    'content' => 'Edited Message 3',
+                ]
+            );
+
+        $response->assertOk();
+
+        Http::assertSent(function (Request $request) {
+            if ($request->url() !== 'https://api.pateway.ai/v1/chat/completions') {
+                return false;
+            }
+
+            $messages = $request->data()['messages'];
+
+            return count($messages) === 2
+                && $messages[0] === [
+                    'role' => 'assistant',
+                    'content' => 'Message 2',
+                ]
+                && $messages[1] === [
+                    'role' => 'user',
+                    'content' => 'Edited Message 3',
+                ];
+        });
+    }
+
+    public function test_deleting_message_updates_conversation_timestamp(): void
+    {
+        $user = User::factory()->create();
+        $conversation = Conversation::factory()->create(['user_id' => $user->id]);
+
+        $message = $conversation->messages()->create([
+            'role' => 'user',
+            'content' => 'Delete me',
+        ]);
+
+        $this->travel(10)->minutes();
+
+        $before = $conversation->fresh()->updated_at;
+
+        $response = $this->actingAs($user)
+            ->deleteJson("/conversations/{$conversation->id}/messages/{$message->id}");
+
+        $response->assertOk()
+            ->assertJsonPath('message', 'Message deleted.');
+
+        $this->assertDatabaseMissing('messages', ['id' => $message->id]);
+        $this->assertNotEquals($before, $conversation->fresh()->updated_at);
+    }
+
+    public function test_deleting_message_bumps_conversation_to_top_of_index(): void
+    {
+        $user = User::factory()->create();
+        $older = Conversation::factory()->create(['user_id' => $user->id, 'updated_at' => now()->subHour()]);
+        $conversation = Conversation::factory()->create(['user_id' => $user->id, 'updated_at' => now()->subHours(2)]);
+
+        $message = $conversation->messages()->create([
+            'role' => 'user',
+            'content' => 'Delete me',
+        ]);
+
+        $this->actingAs($user)->deleteJson("/conversations/{$conversation->id}/messages/{$message->id}")->assertOk();
+
+        $ids = collect($this->actingAs($user)->getJson('/conversations')->json('data'))->pluck('id')->all();
+
+        $this->assertEquals([$conversation->id, $older->id], $ids);
+    }
+
+    public function test_deleting_middle_message_is_rejected(): void
+    {
+        $user = User::factory()->create();
+        $conversation = Conversation::factory()->create(['user_id' => $user->id]);
+
+        $middle = $conversation->messages()->create([
+            'role' => 'user',
+            'content' => 'Middle message',
+        ]);
+
+        $conversation->messages()->create([
+            'role' => 'assistant',
+            'content' => 'Newer reply',
+        ]);
+
+        $response = $this->actingAs($user)
+            ->deleteJson("/conversations/{$conversation->id}/messages/{$middle->id}");
+
+        $response->assertStatus(422)
+            ->assertJsonPath('message', 'Only the latest message can be deleted.');
+
+        $this->assertDatabaseHas('messages', ['id' => $middle->id]);
+    }
+
+    public function test_deleting_older_assistant_message_is_rejected(): void
+    {
+        $user = User::factory()->create();
+        $conversation = Conversation::factory()->create(['user_id' => $user->id]);
+
+        $older = $conversation->messages()->create([
+            'role' => 'assistant',
+            'content' => 'Older reply',
+        ]);
+
+        $conversation->messages()->create([
+            'role' => 'user',
+            'content' => 'Newer message',
+        ]);
+
+        $response = $this->actingAs($user)
+            ->deleteJson("/conversations/{$conversation->id}/messages/{$older->id}");
+
+        $response->assertStatus(422)
+            ->assertJsonPath('message', 'Only the latest message can be deleted.');
+
+        $this->assertDatabaseHas('messages', ['id' => $older->id]);
+    }
+
+    public function test_deleting_latest_assistant_message_succeeds(): void
+    {
+        $user = User::factory()->create();
+        $conversation = Conversation::factory()->create(['user_id' => $user->id]);
+
+        $conversation->messages()->create([
+            'role' => 'user',
+            'content' => 'Question',
+        ]);
+
+        $latest = $conversation->messages()->create([
+            'role' => 'assistant',
+            'content' => 'Latest reply',
+        ]);
+
+        $this->actingAs($user)
+            ->deleteJson("/conversations/{$conversation->id}/messages/{$latest->id}")
+            ->assertOk()
+            ->assertJsonPath('message', 'Message deleted.');
+
+        $this->assertDatabaseMissing('messages', ['id' => $latest->id]);
+    }
+
+    public function test_regenerate_limits_ai_context_to_configured_message_count(): void
+    {
+        config(['ai.context_messages' => 2]);
+        config()->set('ai.provider', 'pateway');
+        config()->set('ai.providers.pateway.model', 'default-model-abc');
+
+        Http::fake([
+            'https://api.pateway.ai/v1/chat/completions' => Http::response([
+                'choices' => [
+                    [
+                        'message' => [
+                            'content' => 'Regenerated response.',
+                        ],
+                    ],
+                ],
+            ]),
+        ]);
+
+        $user = User::factory()->create();
+
+        $conversation = Conversation::factory()->create([
+            'user_id' => $user->id,
+        ]);
+
+        $conversation->messages()->create([
+            'role' => 'user',
+            'content' => 'Message 1',
+        ]);
+
+        $conversation->messages()->create([
+            'role' => 'assistant',
+            'content' => 'Message 2',
+        ]);
+
+        $conversation->messages()->create([
+            'role' => 'user',
+            'content' => 'Message 3',
+        ]);
+
+        $assistantMessage = $conversation->messages()->create([
+            'role' => 'assistant',
+            'content' => 'Message 4',
+        ]);
+
+        $response = $this->actingAs($user)
+            ->postJson(
+                "/conversations/{$conversation->id}/messages/{$assistantMessage->id}/regenerate"
+            );
+
+        $response->assertOk();
+
+        Http::assertSent(function (Request $request) {
+            if ($request->url() !== 'https://api.pateway.ai/v1/chat/completions') {
+                return false;
+            }
+
+            $messages = $request->data()['messages'];
+
+            return count($messages) === 2
+                && $messages[0] === [
+                    'role' => 'assistant',
+                    'content' => 'Message 2',
+                ]
+                && $messages[1] === [
+                    'role' => 'user',
+                    'content' => 'Message 3',
+                ];
+        });
     }
 }

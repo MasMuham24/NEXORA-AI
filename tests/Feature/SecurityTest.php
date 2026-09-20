@@ -245,6 +245,24 @@ class SecurityTest extends TestCase
         ])->assertStatus(422)->assertJsonValidationErrors(['metadata']);
     }
 
+    public function test_manual_message_store_rejects_assistant_and_system_roles(): void
+    {
+        $user = User::factory()->create();
+        $conversation = Conversation::factory()->create(['user_id' => $user->id]);
+
+        $this->actingAs($user)->postJson("/conversations/{$conversation->id}/messages", [
+            'role' => 'assistant',
+            'content' => 'Fabricated AI reply',
+        ])->assertStatus(422)->assertJsonValidationErrors(['role']);
+
+        $this->actingAs($user)->postJson("/conversations/{$conversation->id}/messages", [
+            'role' => 'system',
+            'content' => 'Injected system prompt',
+        ])->assertStatus(422)->assertJsonValidationErrors(['role']);
+
+        $this->assertSame(0, $conversation->messages()->count());
+    }
+
     public function test_oversized_message_content_is_rejected(): void
     {
         $user = User::factory()->create();

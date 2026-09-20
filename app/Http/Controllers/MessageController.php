@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Conversation;
 use App\Models\Message;
 use App\Services\AI\AIService;
+use App\Services\AI\ContextBuilder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Throwable;
@@ -12,7 +13,8 @@ use Throwable;
 class MessageController extends Controller
 {
     public function __construct(
-        protected AIService $aiService
+        protected AIService $aiService,
+        protected ContextBuilder $contextBuilder
     ) {}
 
     protected function reportAiFailure(Throwable $e, array $context = []): void
@@ -42,13 +44,14 @@ class MessageController extends Controller
         );
 
         $validated = $request->validate([
-            'role' => ['required', 'in:user,assistant,system'],
+            'role' => ['required', 'in:user'],
             'content' => ['required', 'string', 'max:100000'],
             'metadata' => ['nullable', 'array', 'max:100'],
         ]);
 
         $message = $conversation->messages()->create($validated);
         $conversation->touch();
+
         return response()->json([
             'message' => 'Message created.',
             'data' => $message,
@@ -63,7 +66,16 @@ class MessageController extends Controller
         );
 
         $message = $conversation->messages()->findOrFail($message);
+
+        if ($conversation->messages()->where('id', '>', $message->id)->exists()) {
+            return response()->json([
+                'message' => 'Only the latest message can be deleted.',
+            ], 422);
+        }
+
         $message->delete();
+        $conversation->touch();
+
         return response()->json([
             'message' => 'Message deleted.',
         ]);
@@ -102,21 +114,7 @@ class MessageController extends Controller
             'content' => $validated['content'],
         ]);
 
-        $conversation->messages()
-            ->where('id', '>', $userMessage->id)
-            ->delete();
-
-        $history = $conversation->messages()
-            ->where('id', '<=', $userMessage->id)
-            ->orderBy('created_at')
-            ->orderBy('id')
-            ->get()
-            ->map(fn (Message $message) => [
-                'role' => $message->role,
-                'content' => $message->content,
-            ])
-            ->values()
-            ->all();
+        $history = $this->contextBuilder->build($conversation, $userMessage->id);
 
         try {
             $response = $this->aiService->chat($history, [
@@ -133,6 +131,10 @@ class MessageController extends Controller
                 'message' => 'AI request failed.',
             ], 502);
         }
+
+        $conversation->messages()
+            ->where('id', '>', $userMessage->id)
+            ->delete();
 
         $assistantMessage = $conversation->messages()->create([
             'role' => 'assistant',
@@ -190,20 +192,11 @@ class MessageController extends Controller
             ]);
         }
 
-        $history = $conversation->messages()
-            ->orderBy('created_at')
-            ->orderBy('id')
-            ->get()
-            ->map(fn (Message $message) => [
-                'role' => $message->role,
-                'content' => $message->content,
-            ])
-            ->push([
-                'role' => 'user',
-                'content' => $validated['content'],
-            ])
-            ->values()
-            ->all();
+        $history = $this->contextBuilder->build($conversation);
+        $history[] = [
+            'role' => 'user',
+            'content' => $validated['content'],
+        ];
 
         $userMessage = $conversation->messages()->create([
             'role' => 'user',
@@ -302,7 +295,7 @@ class MessageController extends Controller
                         break;
                     }
                     $full .= $chunk;
-                    echo 'data: ' . json_encode(['content' => $chunk]) . "\n\n";
+                    echo 'data: '.json_encode(['content' => $chunk])."\n\n";
                     flush();
                 }
 
@@ -313,7 +306,7 @@ class MessageController extends Controller
             } catch (Throwable $e) {
                 $this->reportAiFailure($e, ['conversation_id' => $conversation->id, 'stream' => true]);
                 $failed = true;
-                echo 'data: ' . json_encode(['error' => 'AI request failed.']) . "\n\n";
+                echo 'data: '.json_encode(['error' => 'AI request failed.'])."\n\n";
                 flush();
             }
 
@@ -377,17 +370,9 @@ class MessageController extends Controller
             ], 422);
         }
 
-        $history = $conversation->messages()
-            ->where('id', '<=', $userMessage->id)
-            ->orderBy('created_at')
-            ->orderBy('id')
-            ->get()
-            ->map(fn (Message $message) => [
-                'role' => $message->role,
-                'content' => $message->content,
-            ])
-            ->values()
-            ->all();
+        $history = $this->contextBuilder->build(
+            $conversation, $userMessage->id
+        );
 
         try {
             $response = $this->aiService->chat($history, [
