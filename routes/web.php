@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\ConversationController;
+use App\Http\Controllers\KnowledgeBaseController;
 use App\Http\Controllers\MessageController;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Route;
@@ -37,4 +38,10 @@ Route::middleware('auth')->group(function () {
         Route::post('/conversations/{conversation}/chat', [MessageController::class, 'chat']);
         Route::post('/conversations/{conversation}/messages/{message}/regenerate', [MessageController::class, 'regenerate']);
     });
+    // knowladge base
+    Route::get('/knowledge-bases', [KnowledgeBaseController::class, 'index']);
+    Route::post('/knowledge-bases', [KnowledgeBaseController::class, 'store']);
+    Route::get('/knowledge-bases/{knowledgeBase}', [KnowledgeBaseController::class, 'show']);
+    Route::put('/knowledge-bases/{knowledgeBase}', [KnowledgeBaseController::class, 'update']);
+    Route::delete('/knowledge-bases/{knowledgeBase}', [KnowledgeBaseController::class, 'destroy']);
 });
