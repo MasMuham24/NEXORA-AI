@@ -16,6 +16,7 @@ class Document extends Model
         'original_filename',
         'mime_type',
         'file_size',
+        'file_path',
         'content',
         'extraction_status',
         'extraction_error',

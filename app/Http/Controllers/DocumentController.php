@@ -5,8 +5,9 @@ namespace App\Http\Controllers;
 use App\Models\Document;
 use App\Models\KnowledgeBase;
 use App\Services\DocumentExtractionService;
-use RuntimeException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
+use RuntimeException;
 
 class DocumentController extends Controller
 {
@@ -25,22 +26,29 @@ class DocumentController extends Controller
         return response()->json($documents);
     }
 
-    public function store(Request $request,  KnowledgeBase $knowledgeBase, DocumentExtractionService $extractionService)
+    public function store(Request $request, KnowledgeBase $knowledgeBase, DocumentExtractionService $extractionService)
     {
         abort_unless($knowledgeBase->user_id === $request->user()->id, 404);
-        $validated= $request->validate([
+
+        $validated = $request->validate([
             'title' => ['required', 'string', 'max:255'],
-            'original_filename' => ['required', 'string', 'max:255'],
-            'mime_type' => ['required', 'string', 'max:100'],
-            'file_size' => ['required', 'integer', 'min:0'],
-            'content' => ['nullable', 'string'],
+            'file' => ['required', 'file', 'mimes:txt,docx,pdf'],
         ]);
+
+        $file = $validated['file'];
+        $storedPath = $file->store("documents/{$knowledgeBase->id}", 'local');
+
         $document = $knowledgeBase->documents()->create([
-            ...$validated,
+            'title' => $validated['title'],
+            'original_filename' => $file->getClientOriginalName(),
+            'mime_type' => $file->getMimeType(),
+            'file_size' => $file->getSize(),
+            'file_path' => Storage::disk('local')->path($storedPath),
             'extraction_status' => 'pending',
         ]);
+
         try {
-            $content= $extractionService->extract($document);
+            $content = $extractionService->extract($document);
             $document->update([
                 'content' => $content,
                 'extraction_status' => 'completed',
@@ -52,9 +60,10 @@ class DocumentController extends Controller
                 'extraction_error' => $exception->getMessage(),
             ]);
         }
+
         return response()->json([
-            'message' => 'Document created',
-            'document'=> $document->fresh(),
+            'message' => 'Document created.',
+            'document' => $document->fresh(),
         ], 201);
     }
 

@@ -4,6 +4,8 @@ namespace Tests\Unit;
 
 use App\Models\Document;
 use App\Services\DocumentExtractionService;
+use PhpOffice\PhpWord\IOFactory;
+use PhpOffice\PhpWord\PhpWord;
 use Tests\TestCase;
 
 class DocumentExtractionTest extends TestCase
@@ -29,21 +31,21 @@ class DocumentExtractionTest extends TestCase
         parent::tearDown();
     }
 
-    public function test_txt_document_can_be_extracted(): void
+    public function test_docx_document_can_be_extracted(): void
     {
-        $path = $this->tempDirectory.'/manual.txt';
-        file_put_contents(
-            $path,
-            'NEXORA-AI is a document and knowledge management platform.'
-        );
+        $path = $this->tempDirectory.'/manual.docx';
+        $phpWord = new PhpWord;
+        $section = $phpWord->addSection();
+        $section->addText('NEXORA-AI Document Knowledge Management.');
+        IOFactory::createWriter($phpWord, 'Word2007')->save($path);
         $document = new Document([
-            'original_filename' => 'manual.txt',
+            'original_filename' => 'manual.docx',
         ]);
         $document->file_path = $path;
         $service = new DocumentExtractionService;
         $result = $service->extract($document);
-        $this->assertSame(
-            'NEXORA-AI is a document and knowledge management platform.',
+        $this->assertStringContainsString(
+            'NEXORA-AI Document Knowledge Management.',
             $result
         );
     }
@@ -70,5 +72,51 @@ class DocumentExtractionTest extends TestCase
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('TXT file could not be found.');
         $service->extract($document);
+    }
+
+    public function test_pdf_document_can_be_extracted(): void
+    {
+        $path = $this->tempDirectory.'/manual.pdf';
+        file_put_contents($path, $this->buildMinimalPdf(
+            'NEXORA-AI Knowledge Platform'
+        ));
+        $document = new Document([
+            'original_filename' => 'manual.pdf',
+        ]);
+        $document->file_path = $path;
+        $service = new DocumentExtractionService;
+        $result = $service->extract($document);
+        $this->assertStringContainsString(
+            'NEXORA-AI Knowledge Platform',
+            $result
+        );
+    }
+
+    private function buildMinimalPdf(string $text): string
+    {
+        $stream = "BT\n/F1 18 Tf\n100 700 Td\n({$text}) Tj\nET\n";
+        $objects = [
+            1 => "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+            2 => "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+            3 => "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n",
+            4 => "4 0 obj\n<< /Length ".strlen($stream)." >>\nstream\n".$stream."endstream\nendobj\n",
+            5 => "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+        ];
+
+        $content = "%PDF-1.4\n";
+        $offsets = [];
+        foreach ([1, 2, 3, 4, 5] as $num) {
+            $offsets[$num] = strlen($content);
+            $content .= $objects[$num];
+        }
+
+        $xrefStart = strlen($content);
+        $xref = "xref\n0 6\n";
+        $xref .= sprintf("%010d 65535 f\r\n", 0);
+        foreach ([1, 2, 3, 4, 5] as $num) {
+            $xref .= sprintf("%010d 00000 n\r\n", $offsets[$num]);
+        }
+
+        return $content.$xref."trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n{$xrefStart}\n%%EOF\n";
     }
 }
