@@ -17,7 +17,16 @@ class Document extends Model
         'mime_type',
         'file_size',
         'content',
+        'extraction_status',
+        'extraction_error',
     ];
+
+    protected function casts(): array
+    {
+        return [
+            'file_size' => 'integer',
+        ];
+    }
 
     public function knowledgeBase(): BelongsTo
     {

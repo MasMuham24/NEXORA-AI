@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\ConversationController;
+use App\Http\Controllers\DocumentController;
 use App\Http\Controllers\KnowledgeBaseController;
 use App\Http\Controllers\MessageController;
 use Illuminate\Support\Facades\Auth;
@@ -44,4 +45,9 @@ Route::middleware('auth')->group(function () {
     Route::get('/knowledge-bases/{knowledgeBase}', [KnowledgeBaseController::class, 'show']);
     Route::put('/knowledge-bases/{knowledgeBase}', [KnowledgeBaseController::class, 'update']);
     Route::delete('/knowledge-bases/{knowledgeBase}', [KnowledgeBaseController::class, 'destroy']);
+    Route::get('/knowledge-bases/{knowledgeBase}/documents', [DocumentController::class, 'index']);
+    Route::post('/knowledge-bases/{knowledgeBase}/documents', [DocumentController::class, 'store']);
+    Route::get('/knowledge-bases/{knowledgeBase}/documents/{document}', [DocumentController::class, 'show']);
+    Route::put('/knowledge-bases/{knowledgeBase}/documents/{document}', [DocumentController::class, 'update']);
+    Route::delete('/knowledge-bases/{knowledgeBase}/documents/{document}', [DocumentController::class, 'destroy']);
 });

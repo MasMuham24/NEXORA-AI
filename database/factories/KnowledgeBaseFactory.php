@@ -17,8 +17,8 @@ class KnowledgeBaseFactory extends Factory
     {
         return [
             'user_id' => User::factory(),
-            'name' => fake()->sentence(3),
-            'description' => fake()->optional()->paragraph(),
+            'name' => fake()->words(3, true),
+            'description' => fake()->paragraph(),
         ];
     }
 }
